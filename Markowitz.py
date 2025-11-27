@@ -1,6 +1,7 @@
 """
 Package Import
 """
+
 import yfinance as yf
 import numpy as np
 import pandas as pd
@@ -37,8 +38,8 @@ end = "2024-04-01"
 # Initialize df and df_returns
 df = pd.DataFrame()
 for asset in assets:
-    raw = yf.download(asset, start=start, end=end, auto_adjust = False)
-    df[asset] = raw['Adj Close']
+    raw = yf.download(asset, start=start, end=end, auto_adjust=False)
+    df[asset] = raw["Adj Close"]
 
 df_returns = df.pct_change().fillna(0)
 
@@ -62,6 +63,14 @@ class EqualWeightPortfolio:
         """
         TODO: Complete Task 1 Below
         """
+        # Assign equal weights to all non-excluded assets across all dates
+        num_assets = len(assets)
+        if num_assets > 0:
+            equal_weight = 1.0 / num_assets
+            # assign equal weight to all rows (dates) for the non-excluded assets
+            self.portfolio_weights.loc[:, assets] = equal_weight
+        # Ensure excluded asset has zero allocation
+        self.portfolio_weights[self.exclude] = 0
 
         """
         TODO: Complete Task 1 Above
@@ -114,7 +123,28 @@ class RiskParityPortfolio:
         TODO: Complete Task 2 Below
         """
 
+        # For each date i, we calculate the std of the returns for the previous lookback days, then calculate the weight based on the definition stated in the spec
+        # note: under this situation, the dates that cannot get the past lookback days will not have their weights assigned
+        for i in range(self.lookback + 1, len(df)):
+            # get the returns for the past lookback days (we're taking rows from i - lookback to i)
+            # explain: window_returns is of shape (50, 11), which means the returns for the past 50 days (rows) for 11 assets (columns), use debugger to see the data
+            window_returns = df_returns.copy()[assets].iloc[i - self.lookback : i]
+            sigma = window_returns.std()
 
+            # Inverse volatility weights, if the std is 0, we replace it with nan, then fill the nan with 0
+            inv_sigma = 1.0 / sigma.replace(0, np.nan)
+            inv_sigma = inv_sigma.fillna(0.0)
+
+            # if the sum of the inverse volatility weights is 0, to avoid division by zero, we assign equal weights to all assets
+            if inv_sigma.sum() == 0:
+                weights = np.repeat(1.0 / len(assets), len(assets))
+            else:
+                weights = (inv_sigma / inv_sigma.sum()).values
+
+            self.portfolio_weights.loc[df.index[i], assets] = weights
+
+        # Ensure excluded asset has zero allocation
+        self.portfolio_weights[self.exclude] = 0
 
         """
         TODO: Complete Task 2 Above
@@ -186,12 +216,20 @@ class MeanVariancePortfolio:
             with gp.Model(env=env, name="portfolio") as model:
                 """
                 TODO: Complete Task 3 Below
+
+                Note: For detailed explanation including the basics about gurobi, refer to README.md.
                 """
 
-                # Sample Code: Initialize Decision w and the Objective
-                # NOTE: You can modify the following code
-                w = model.addMVar(n, name="w", ub=1)
-                model.setObjective(w.sum(), gp.GRB.MAXIMIZE)
+                w = model.addMVar(n, name="w", ub=1.0)
+
+                model.addConstr(w.sum() == 1.0, name="budget")
+
+                # Mean-variance objective:
+                # maximize w^T mu - (gamma/2) * \frac{gamma}{2} w^T Sigma w
+                mean_term = mu @ w
+                risk_term = w @ (Sigma @ w)
+                objective = mean_term - (gamma / 2.0) * risk_term
+                model.setObjective(objective, gp.GRB.MAXIMIZE)
 
                 """
                 TODO: Complete Task 3 Above
@@ -277,6 +315,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     judge = AssignmentJudge()
-    
+
     # All grading logic is protected in grader.py
     judge.run_grading(args)

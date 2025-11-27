@@ -1,6 +1,7 @@
 """
 Package Import
 """
+
 import yfinance as yf
 import numpy as np
 import pandas as pd
@@ -34,10 +35,17 @@ assets = [
 # Initialize Bdf and df
 Bdf = pd.DataFrame()
 for asset in assets:
-    raw = yf.download(asset, start="2012-01-01", end="2024-04-01", auto_adjust = False)
-    Bdf[asset] = raw['Adj Close']
+    raw = yf.download(asset, start="2012-01-01", end="2024-04-01", auto_adjust=False)
+    Bdf[asset] = raw["Adj Close"]
 
-df = Bdf.loc["2019-01-01":"2024-04-01"]
+# Two evaluation datasets:
+# - sharpRatio_ge1_df: 2019–2024
+# - better_than_SPYSharpRatio_df: 2012–2024
+sharpRatio_ge1_df = Bdf.loc["2019-01-01":"2024-04-01"]
+better_than_SPYSharpRatio_df = Bdf
+
+# Preserve original names used by the grader
+df = sharpRatio_ge1_df
 
 """
 Strategy Creation
@@ -51,12 +59,22 @@ class MyPortfolio:
     NOTE: You can modify the initialization function
     """
 
-    def __init__(self, price, exclude, lookback=50, gamma=0):
+    def __init__(
+        self,
+        price,
+        exclude,
+        lookback_momentum=5,
+        lookback_volatility=6,
+        gamma=0,
+        alpha=0.7,
+    ):
         self.price = price
         self.returns = price.pct_change().fillna(0)
         self.exclude = exclude
-        self.lookback = lookback
+        self.lookback_momentum = lookback_momentum
+        self.lookback_volatility = lookback_volatility
         self.gamma = gamma
+        self.alpha = alpha
 
     def calculate_weights(self):
         # Get the assets by excluding the specified column
@@ -70,8 +88,38 @@ class MyPortfolio:
         """
         TODO: Complete Task 4 Below
         """
-        
-        
+        # For each rebalancing date, compute momentum (mean return) with its window,
+        # volatility (std) with its own window,
+        # build risk-adjusted positive momentum signal, and normalize to weights.
+        warmup = max(self.lookback_momentum, self.lookback_volatility)
+        for i in range(warmup + 1, len(self.price)):
+            window_mom = self.returns.copy()[assets].iloc[
+                i - self.lookback_momentum : i
+            ]
+            window_vol = self.returns.copy()[assets].iloc[
+                i - self.lookback_volatility : i
+            ]
+
+            momentum = window_mom.mean()  # average daily return over mom window
+            volatility = window_vol.std(ddof=1)  # sample std over vol window
+
+            # Risk-adjusted momentum signal: max(0, momentum) / volatility
+            positive_momentum = momentum.clip(lower=0.0)
+            denom = volatility.replace(0, np.nan)
+            signal = (positive_momentum / denom).fillna(0.0) ** self.alpha
+
+            # Normalize signals to get portfolio weights; fallback to equal weight
+            signal_sum = signal.sum()
+            if signal_sum == 0:
+                weights = np.repeat(1.0 / len(assets), len(assets))
+            else:
+                weights = (signal / signal_sum).values
+
+            self.portfolio_weights.loc[self.price.index[i], assets] = weights
+
+        # Ensure excluded asset has zero allocation
+        self.portfolio_weights[self.exclude] = 0
+
         """
         TODO: Complete Task 4 Above
         """
@@ -104,7 +152,7 @@ class MyPortfolio:
 if __name__ == "__main__":
     # Import grading system (protected file in GitHub Classroom)
     from grader_2 import AssignmentJudge
-    
+
     parser = argparse.ArgumentParser(
         description="Introduction to Fintech Assignment 3 Part 12"
     )
@@ -138,6 +186,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     judge = AssignmentJudge()
-    
+
     # All grading logic is protected in grader_2.py
     judge.run_grading(args)
