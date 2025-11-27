@@ -63,10 +63,11 @@ class MyPortfolio:
         self,
         price,
         exclude,
-        lookback_momentum=5,
-        lookback_volatility=6,
+        lookback_momentum=12,
+        lookback_volatility=15,
         gamma=0,
-        alpha=0.7,
+        alpha=1.0,
+        c=0.6,
     ):
         self.price = price
         self.returns = price.pct_change().fillna(0)
@@ -75,6 +76,7 @@ class MyPortfolio:
         self.lookback_volatility = lookback_volatility
         self.gamma = gamma
         self.alpha = alpha
+        self.c = c
 
     def calculate_weights(self):
         # Get the assets by excluding the specified column
@@ -114,6 +116,11 @@ class MyPortfolio:
                 weights = np.repeat(1.0 / len(assets), len(assets))
             else:
                 weights = (signal / signal_sum).values
+
+            # Market-wide risk control: if average momentum is negative, shrink exposure
+            market_momentum = momentum.mean()
+            if market_momentum < 0:
+                weights = self.c * weights  # leftover (1-c) effectively goes to cash
 
             self.portfolio_weights.loc[self.price.index[i], assets] = weights
 
